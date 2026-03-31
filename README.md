@@ -1,12 +1,15 @@
 # IFStruct
 
-Standalone, frozen implementation of the `ifstruct` eval.
+IFStruct is an eval for instruction-following on structured output tasks.
 
-This repo contains:
+It tests whether a model can produce JSON or YAML that matches a target schema while also following formatting constraints such as:
 
-- a precomputed 2,000-example test set in `data/test.jsonl`
-- a small OpenAI-compatible eval runner using `requests`
-- the validator used to score JSON/YAML structured-output responses
+- returning the right top-level shape
+- using the required wrapper key when one is specified
+- emitting a code block when requested
+- avoiding extra commentary outside the structured output
+
+This repo includes the dataset, validator, and a small CLI runner for evaluating models against the benchmark.
 
 ## Install
 
@@ -58,7 +61,22 @@ uv run ifstruct-eval \
 You can still override either setting explicitly with `--base-url` or `--api-key`.
 `--results-file` writes a JSON artifact with run metadata, aggregate summary stats, and per-sample prompts, responses, and validation results.
 
-## Dataset format
+## Methodology
+
+IFStruct uses a 2,000-example test set in [data/test.jsonl](/Users/sam/code/evals/ifstruct/data/test.jsonl). Each example includes a prompt, a target schema, and explicit structural requirements for the response.
+
+The eval sends each prompt to an OpenAI-compatible chat completions endpoint, captures the model response, and validates it against:
+
+- the requested output format: JSON or YAML
+- the expected top-level structure: bare list or wrapped object
+- the required wrapper key when applicable
+- code-block requirements
+- no-commentary requirements
+- the provided schema for item-level fields and types
+
+The CLI prints aggregate pass rates and can also write a full results artifact containing run metadata plus every prompt, response, and validation result.
+
+## Dataset Format
 
 Each JSONL row contains:
 
@@ -72,5 +90,3 @@ Each JSONL row contains:
 - `require_code_block`
 - `require_no_commentary`
 - `output_format`
-
-The test set is the first 2,000 seeds from the `test` split of the current IFStruct taxonomy.

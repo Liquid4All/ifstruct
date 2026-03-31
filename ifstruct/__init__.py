@@ -1,2 +1,2 @@
-"""Standalone IFStruct evaluator."""
+"""IFStruct evaluator."""
 

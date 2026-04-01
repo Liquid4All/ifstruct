@@ -303,7 +303,12 @@ def _count_schema_leaves(schema: dict[str, Any]) -> int:
         properties = schema.get("properties", {})
         if not properties:
             return 1
-        return sum(_count_schema_leaves(s) for s in properties.values())
+        required = schema.get("required")
+        if required is None:
+            selected = list(properties.values())
+        else:
+            selected = [properties[name] for name in required if name in properties]
+        return sum(_count_schema_leaves(s) for s in selected) if selected else 1
     if schema_type == "array":
         items_schema = schema.get("items")
         return _count_schema_leaves(items_schema) if items_schema else 1
@@ -412,4 +417,3 @@ def validate_response(
     details["schema_match_ratio"] = passed_checks / total_checks if total_checks else 0.0
     passed = len(errors) == 0
     return ValidationResult(passed=passed, score=1.0 if passed else 0.0, errors=errors, details=details)
-

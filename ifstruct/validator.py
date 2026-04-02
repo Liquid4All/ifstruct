@@ -35,21 +35,30 @@ class ValidationResult:
 
 def check_uses_code_block(response: str, output_format: str = "json") -> tuple[bool, str | None]:
     response = response.strip()
-    if output_format == "yaml":
-        if re.search(r"```yaml\s*[\s\S]*?\s*```", response):
+    _, opening_fence = _extract_outer_fenced_block(response)
+    if opening_fence is not None:
+        lowered = opening_fence.strip().lower()
+        if lowered.startswith("```yaml"):
             return True, "```yaml"
-        if re.search(r"```yml\s*[\s\S]*?\s*```", response):
+        if lowered.startswith("```yml"):
             return True, "```yml"
-    else:
-        if re.search(r"```json\s*[\s\S]*?\s*```", response):
+        if lowered.startswith("```json"):
             return True, "```json"
-    if re.search(r"```\s*[\s\S]*?\s*```", response):
         return True, "```"
     return False, None
 
 
 def extract_json_from_response(response: str) -> tuple[Any | None, str | None]:
     response = response.strip()
+
+    block, opening_fence = _extract_outer_fenced_block(response)
+    if block is not None:
+        lowered = (opening_fence or "").strip().lower()
+        if not (lowered.startswith("```yaml") or lowered.startswith("```yml")):
+            try:
+                return json.loads(block.strip()), None
+            except json.JSONDecodeError:
+                pass
 
     for pattern in [r"```json\s*([\s\S]*?)\s*```", r"```\s*([\s\S]*?)\s*```"]:
         matches = re.findall(pattern, response)
@@ -121,6 +130,12 @@ def _format_yaml_error(exc: Exception) -> str:
 def extract_yaml_from_response(response: str) -> tuple[Any | None, str | None]:
     response = response.strip()
     last_error: str | None = None
+    block, opening_fence = _extract_outer_fenced_block(response)
+    if block is not None:
+        try:
+            return yaml.load(block.strip(), Loader=_SafeLoaderNoDate), None
+        except (yaml.YAMLError, ValueError) as exc:
+            last_error = _format_yaml_error(exc)
     for pattern in [r"```yaml\s*([\s\S]*?)\s*```", r"```yml\s*([\s\S]*?)\s*```", r"```\s*([\s\S]*?)\s*```"]:
         matches = re.findall(pattern, response)
         for match in matches:
@@ -128,59 +143,91 @@ def extract_yaml_from_response(response: str) -> tuple[Any | None, str | None]:
                 return yaml.load(match.strip(), Loader=_SafeLoaderNoDate), None
             except (yaml.YAMLError, ValueError) as exc:
                 last_error = _format_yaml_error(exc)
+    try:
+        return yaml.load(response, Loader=_SafeLoaderNoDate), None
+    except (yaml.YAMLError, ValueError) as exc:
+        last_error = _format_yaml_error(exc)
     if last_error:
         return None, f"YAML parsing error: {last_error}"
     return None, "No valid YAML found in response (YAML must be in a ```yaml code block)"
 
 
-def check_for_commentary(response: str) -> tuple[bool, str | None]:
-    response = response.strip()
-    remaining = response
-    for pattern in [r"```json\s*([\s\S]*?)\s*```", r"```\s*([\s\S]*?)\s*```"]:
-        if re.search(pattern, remaining):
-            remaining = re.sub(pattern, "", remaining)
+def _extract_outer_fenced_block(response: str) -> tuple[str | None, str | None]:
+    lines = response.strip().splitlines()
+    start_idx = None
+    opening_fence = None
+
+    for i, line in enumerate(lines):
+        if line.startswith("```"):
+            start_idx = i
+            opening_fence = line
             break
 
-    if remaining == response:
-        first_brace = response.find("{")
-        first_bracket = response.find("[")
-        if not (first_brace == -1 and first_bracket == -1):
-            if first_bracket == -1 or (first_brace != -1 and first_brace < first_bracket):
-                char_order = [("{", "}"), ("[", "]")]
-            else:
-                char_order = [("[", "]"), ("{", "}")]
-            for start_char, end_char in char_order:
-                start_idx = response.find(start_char)
-                if start_idx == -1:
-                    continue
-                depth = 0
-                in_string = False
+    if start_idx is None:
+        return None, None
+
+    for j in range(start_idx + 1, len(lines)):
+        if lines[j].startswith("```"):
+            return "\n".join(lines[start_idx + 1 : j]), opening_fence
+
+    return None, opening_fence
+
+
+def _find_json_boundaries(response: str) -> tuple[int, int] | None:
+    first_brace = response.find("{")
+    first_bracket = response.find("[")
+    if first_brace == -1 and first_bracket == -1:
+        return None
+
+    if first_bracket == -1 or (first_brace != -1 and first_brace < first_bracket):
+        char_order = [("{", "}"), ("[", "]")]
+    else:
+        char_order = [("[", "]"), ("{", "}")]
+
+    for start_char, end_char in char_order:
+        start_idx = response.find(start_char)
+        if start_idx == -1:
+            continue
+        depth = 0
+        in_string = False
+        escape_next = False
+        for i, c in enumerate(response[start_idx:], start_idx):
+            if escape_next:
                 escape_next = False
-                end_idx = -1
-                for i, c in enumerate(response[start_idx:], start_idx):
-                    if escape_next:
-                        escape_next = False
-                        continue
-                    if c == "\\":
-                        escape_next = True
-                        continue
-                    if c == '"' and not escape_next:
-                        in_string = not in_string
-                        continue
-                    if in_string:
-                        continue
-                    if c == start_char:
-                        depth += 1
-                    elif c == end_char:
-                        depth -= 1
-                        if depth == 0:
-                            end_idx = i
-                            break
-                if end_idx != -1:
-                    before = response[:start_idx].strip()
-                    after = response[end_idx + 1 :].strip()
-                    remaining = f"{before} {after}".strip()
-                    break
+                continue
+            if c == "\\":
+                escape_next = True
+                continue
+            if c == '"' and not escape_next:
+                in_string = not in_string
+                continue
+            if in_string:
+                continue
+            if c == start_char:
+                depth += 1
+            elif c == end_char:
+                depth -= 1
+                if depth == 0:
+                    return start_idx, i
+    return None
+
+
+def check_for_commentary(response: str) -> tuple[bool, str | None]:
+    response = response.strip()
+    block, _ = _extract_outer_fenced_block(response)
+    if block is not None:
+        before = response[: response.find("```")].strip()
+        end_marker = response.rfind("```")
+        after = response[end_marker + 3 :].strip() if end_marker != -1 else ""
+        remaining = f"{before} {after}".strip()
+    else:
+        boundaries = _find_json_boundaries(response)
+        if boundaries is None:
+            return False, None
+        start_idx, end_idx = boundaries
+        before = response[:start_idx].strip()
+        after = response[end_idx + 1 :].strip()
+        remaining = f"{before} {after}".strip()
 
     remaining = remaining.strip()
     if not remaining:
@@ -193,11 +240,14 @@ def check_for_commentary(response: str) -> tuple[bool, str | None]:
 
 def check_for_commentary_yaml(response: str) -> tuple[bool, str | None]:
     response = response.strip()
-    remaining = response
-    for pattern in [r"```(?:yaml|yml)\s*[\s\S]*?\s*```", r"```\s*[\s\S]*?\s*```"]:
-        if re.search(pattern, remaining):
-            remaining = re.sub(pattern, "", remaining)
-            break
+    block, _ = _extract_outer_fenced_block(response)
+    if block is not None:
+        before = response[: response.find("```")].strip()
+        end_marker = response.rfind("```")
+        after = response[end_marker + 3 :].strip() if end_marker != -1 else ""
+        remaining = f"{before} {after}".strip()
+    else:
+        return False, None
     remaining = remaining.strip()
     if not remaining:
         return False, None

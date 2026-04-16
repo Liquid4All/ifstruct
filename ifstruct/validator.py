@@ -305,8 +305,8 @@ def validate_against_json_schema(data: Any, schema: dict[str, Any], path: str = 
                 field_path = f"{path}.{field_name}" if path else field_name
                 checks.extend(validate_against_json_schema(data[field_name], field_schema, field_path))
         extra_keys = set(data.keys()) - set(properties.keys())
-        for key in sorted(extra_keys):
-            field_path = f"{path}.{key}" if path else key
+        for key in sorted(extra_keys, key=str):
+            field_path = f"{path}.{str(key)}" if path else str(key)
             checks.append(FieldCheck(field_path, False, f"extraneous field '{key}'"))
         return checks
 

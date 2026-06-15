@@ -134,32 +134,59 @@ JSON_AS_YAML_ERROR = (
 )
 
 
-def _is_flow_style_root(content: str) -> bool:
-    """Return True if the top-level YAML collection is flow style (JSON-like).
+def _contains_flow_mapping(node: yaml.nodes.Node) -> bool:
+    """Return True if any mapping node in the tree uses flow style.
 
-    YAML is a superset of JSON, so JSON content parses cleanly as YAML. A YAML
-    request should not be satisfied by JSON, so we reject documents whose root
-    collection is flow style. Because a flow-style root cannot contain block
-    children, inspecting only the root node is sufficient; block-style roots
-    with nested flow collections (e.g. ``tags: [a, b]``) are still accepted.
+    A flow-style mapping (``{...}``) is the JSON tell: genuine YAML writes
+    objects as block mappings. Flow-style *sequences* of scalars (``[a, b]``)
+    are idiomatic YAML and are not flagged. Walking the whole tree (not just the
+    root) catches JSON emitted under a block wrapper key
+    (``items: [ {...}, {...} ]``) and JSON objects nested inside an otherwise
+    block document.
+    """
+    if isinstance(node, yaml.MappingNode):
+        if node.flow_style:
+            return True
+        return any(
+            _contains_flow_mapping(k) or _contains_flow_mapping(v)
+            for k, v in node.value
+        )
+    if isinstance(node, yaml.SequenceNode):
+        return any(_contains_flow_mapping(item) for item in node.value)
+    return False
+
+
+def _is_json_like_yaml(content: str) -> bool:
+    """Return True if YAML content is really JSON and should be rejected.
+
+    YAML is a superset of JSON, so JSON parses cleanly as YAML. A YAML request
+    should not be satisfied by JSON, so we reject content whose root collection
+    is flow style (e.g. a bare ``[...]`` / ``{...}``) or that contains any
+    flow-style mapping anywhere. Block-style documents with nested flow *scalar*
+    sequences (``tags: [a, b]``) are accepted as idiomatic YAML.
     """
     try:
         root = yaml.compose(content, Loader=_SafeLoaderNoDate)
     except (yaml.YAMLError, RecursionError):
         return False  # let the normal parse path report the error
+    if root is None:
+        return False
     # flow_style is True for flow collections, False for block, and absent on
     # scalars / empty docs (those fail later schema checks with clearer errors).
-    return getattr(root, "flow_style", None) is True
+    if getattr(root, "flow_style", None) is True:
+        return True
+    return _contains_flow_mapping(root)
 
 
 def _load_block_yaml(content: str) -> tuple[Any | None, str | None]:
-    """Parse YAML content, rejecting JSON/flow-style roots.
+    """Parse YAML content, rejecting JSON/flow-style output.
 
-    Returns (parsed, error). On a flow-style root the parse is discarded and an
-    error is returned so a YAML request isn't silently satisfied by JSON.
+    Returns (parsed, error). When the content is JSON-shaped (flow-style root or
+    any flow-style mapping) the parse is discarded and an error is returned so a
+    YAML request isn't silently satisfied by JSON.
     """
     parsed = yaml.load(content, Loader=_SafeLoaderNoDate)
-    if _is_flow_style_root(content):
+    if _is_json_like_yaml(content):
         return None, JSON_AS_YAML_ERROR
     return parsed, None
 

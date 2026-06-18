@@ -1,4 +1,6 @@
 from ifstruct.validator import (
+    check_for_commentary,
+    check_for_commentary_yaml,
     check_uses_code_block,
     extract_json_from_response,
     extract_yaml_from_response,
@@ -70,6 +72,87 @@ def test_raw_json_and_yaml_still_parse_without_fences():
     assert json_data == [{"id": "1"}]
     assert yaml_error is None
     assert yaml_data == [{"id": "1"}]
+
+
+def test_raw_json_rejects_trailing_extra_brace():
+    data, error = extract_json_from_response('{"id": "1"}\n}')
+
+    assert data is None
+    assert error is not None
+    assert "Trailing content after JSON" in error
+
+
+def test_raw_json_rejects_trailing_text():
+    data, error = extract_json_from_response('[{"id": "1"}]\nok')
+
+    assert data is None
+    assert error is not None
+    assert "Trailing content after JSON" in error
+
+
+def test_json_codeblock_rejects_trailing_extra_brace_inside_fence():
+    data, error = extract_json_from_response('```json\n{"id": "1"}\n}\n```')
+
+    assert data is None
+    assert error is not None
+    assert "Trailing content after JSON" in error
+
+
+def test_json_extraction_rejects_yaml_fence():
+    data, error = extract_json_from_response('```yaml\n{"id": "1"}\n```')
+
+    assert data is None
+    assert error == "Expected JSON output, got YAML code block"
+
+
+def test_yaml_extraction_rejects_json_fence():
+    data, error = extract_yaml_from_response("```json\n- id: '1'\n```")
+
+    assert data is None
+    assert error == "Expected YAML output, got JSON code block"
+
+
+def test_commentary_checks_flag_short_text_after_code_block():
+    has_json_commentary, json_commentary = check_for_commentary(
+        '```json\n[{"id": "1"}]\n```\nok'
+    )
+    has_yaml_commentary, yaml_commentary = check_for_commentary_yaml(
+        "```yaml\n- id: '1'\n```\nok"
+    )
+
+    assert has_json_commentary is True
+    assert json_commentary == 'Response contains text outside JSON: "ok"'
+    assert has_yaml_commentary is True
+    assert yaml_commentary == 'Response contains text outside YAML: "ok"'
+
+
+def test_validate_response_fails_extra_brace_inside_json_codeblock():
+    schema = {
+        "type": "array",
+        "items": {
+            "type": "object",
+            "properties": {"id": {"type": "string"}},
+            "required": ["id"],
+        },
+        "minItems": 1,
+        "maxItems": 1,
+    }
+
+    result = validate_response(
+        response='```json\n[{"id": "1"}]\n}\n```',
+        json_schema=schema,
+        top_level_count=1,
+        require_no_commentary=False,
+        output_format="json",
+        top_level_key=None,
+        require_wrapper_key=False,
+        require_code_block=True,
+    )
+
+    assert result.passed is False
+    assert result.score == 0.0
+    assert result.details["uses_code_block"] is True
+    assert any("Trailing content after JSON" in error for error in result.errors)
 
 
 def test_string_enum_mismatch_fails_validation():

@@ -85,60 +85,30 @@ def extract_json_from_response(response: str) -> tuple[Any | None, str | None]:
         return None, "Unclosed code block"
     if block is not None:
         lowered = (opening_fence or "").strip().lower()
-        if not (lowered.startswith("```yaml") or lowered.startswith("```yml")):
-            try:
-                return json.loads(block.strip()), None
-            except json.JSONDecodeError:
-                pass
+        if lowered.startswith("```yaml") or lowered.startswith("```yml"):
+            return None, "Expected JSON output, got YAML code block"
+        return _load_complete_json(block.strip())
 
-    for pattern in [r"```json\s*([\s\S]*?)\s*```", r"```\s*([\s\S]*?)\s*```"]:
-        matches = re.findall(pattern, response)
-        for match in matches:
-            try:
-                return json.loads(match.strip()), None
-            except json.JSONDecodeError:
-                continue
-
-    first_brace = response.find("{")
-    first_bracket = response.find("[")
-    if first_brace == -1 and first_bracket == -1:
+    if not response or response[0] not in "[{":
         return None, "No valid JSON found in response"
 
-    if first_bracket == -1 or (first_brace != -1 and first_brace < first_bracket):
-        char_order = [("{", "}"), ("[", "]")]
-    else:
-        char_order = [("[", "]"), ("{", "}")]
+    return _load_complete_json(response)
 
-    for start_char, end_char in char_order:
-        start_idx = response.find(start_char)
-        if start_idx == -1:
-            continue
-        depth = 0
-        in_string = False
-        escape_next = False
-        for i, c in enumerate(response[start_idx:], start_idx):
-            if escape_next:
-                escape_next = False
-                continue
-            if c == "\\":
-                escape_next = True
-                continue
-            if c == '"' and not escape_next:
-                in_string = not in_string
-                continue
-            if in_string:
-                continue
-            if c == start_char:
-                depth += 1
-            elif c == end_char:
-                depth -= 1
-                if depth == 0:
-                    try:
-                        return json.loads(response[start_idx : i + 1]), None
-                    except json.JSONDecodeError as exc:
-                        return None, f"JSON parse error: {exc}"
 
-    return None, "No valid JSON found in response"
+def _load_complete_json(content: str) -> tuple[Any | None, str | None]:
+    content = content.strip()
+    if not content:
+        return None, "No valid JSON found in response"
+    decoder = json.JSONDecoder()
+    try:
+        parsed, end = decoder.raw_decode(content)
+    except json.JSONDecodeError as exc:
+        return None, f"JSON parse error: {exc}"
+    trailing = content[end:].strip()
+    if trailing:
+        preview = trailing[:100] + "..." if len(trailing) > 100 else trailing
+        return None, f"Trailing content after JSON: {preview!r}"
+    return parsed, None
 
 
 def _format_yaml_error(exc: Exception) -> str:
@@ -229,20 +199,16 @@ def extract_yaml_from_response(response: str) -> tuple[Any | None, str | None]:
     if opening_fence is not None and block is None:
         return None, "Unclosed code block"
     if block is not None:
+        lowered = (opening_fence or "").strip().lower()
+        if lowered.startswith("```json"):
+            return None, "Expected YAML output, got JSON code block"
         try:
             return _load_block_yaml(block.strip())
-        except (yaml.YAMLError, ValueError) as exc:
-            last_error = _format_yaml_error(exc)
-    for pattern in [r"```yaml\s*([\s\S]*?)\s*```", r"```yml\s*([\s\S]*?)\s*```", r"```\s*([\s\S]*?)\s*```"]:
-        matches = re.findall(pattern, response)
-        for match in matches:
-            try:
-                return _load_block_yaml(match.strip())
-            except (yaml.YAMLError, ValueError) as exc:
-                last_error = _format_yaml_error(exc)
+        except (yaml.YAMLError, ValueError, RecursionError) as exc:
+            return None, f"YAML parsing error: {_format_yaml_error(exc)}"
     try:
         return _load_block_yaml(response)
-    except (yaml.YAMLError, ValueError) as exc:
+    except (yaml.YAMLError, ValueError, RecursionError) as exc:
         last_error = _format_yaml_error(exc)
     if last_error:
         return None, f"YAML parsing error: {last_error}"
@@ -329,10 +295,8 @@ def check_for_commentary(response: str) -> tuple[bool, str | None]:
     remaining = remaining.strip()
     if not remaining:
         return False, None
-    if len(remaining) > 10:
-        preview = remaining[:100] + "..." if len(remaining) > 100 else remaining
-        return True, f'Response contains text outside JSON: "{preview}"'
-    return False, None
+    preview = remaining[:100] + "..." if len(remaining) > 100 else remaining
+    return True, f'Response contains text outside JSON: "{preview}"'
 
 
 def check_for_commentary_yaml(response: str) -> tuple[bool, str | None]:
@@ -348,10 +312,8 @@ def check_for_commentary_yaml(response: str) -> tuple[bool, str | None]:
     remaining = remaining.strip()
     if not remaining:
         return False, None
-    if len(remaining) > 10:
-        preview = remaining[:100] + "..." if len(remaining) > 100 else remaining
-        return True, f'Response contains text outside YAML: "{preview}"'
-    return False, None
+    preview = remaining[:100] + "..." if len(remaining) > 100 else remaining
+    return True, f'Response contains text outside YAML: "{preview}"'
 
 
 def validate_against_json_schema(data: Any, schema: dict[str, Any], path: str = "") -> list[FieldCheck]:

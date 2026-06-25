@@ -8,6 +8,8 @@ It tests whether a model can produce valid JSON or YAML that matches a target sc
 
 "Generate five entries in a code review log for a llama.cpp PR, in valid YAML following this schema..."
 
+The IFStruct test set is included in this repo at `data/test.jsonl`, and also on Huggingface at: https://huggingface.co/datasets/LiquidAI/ifstruct-v1.0
+
 ## Why does this exist?
 
 Frontier models can produce more or less perfect JSON and YAML to a schema, but small models still struggle, producing unparseable outputs and ignoring schema constraints. This is a very learnable task for even tiny (350M) models, however there are few evals targeting structured output and its common failure modes.

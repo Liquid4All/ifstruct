@@ -34,7 +34,7 @@ class EvalResult:
     require_wrapper_key: bool
 
 
-def run_one(example: IfStructExample, *, model: str, base_url: str, api_key: str, max_tokens: int, temperature: float, max_retries: int = 40) -> EvalResult:
+def run_one(example: IfStructExample, *, model: str, base_url: str, api_key: str, max_tokens: int, temperature: float, timeout: float, max_retries: int = 40) -> EvalResult:
     completion = chat_completion(
         base_url=base_url,
         api_key=api_key,
@@ -42,6 +42,7 @@ def run_one(example: IfStructExample, *, model: str, base_url: str, api_key: str
         prompt=example.prompt,
         max_tokens=max_tokens,
         temperature=temperature,
+        timeout=timeout,
         max_retries=max_retries,
     )
     validation = validate_response(
@@ -243,6 +244,7 @@ def main() -> None:
     parser.add_argument("--offset", type=int, default=0, help="Optional offset into the dataset.")
     parser.add_argument("--max-tokens", type=int, default=16000)
     parser.add_argument("--temperature", type=float, default=0.0)
+    parser.add_argument("--timeout", type=float, default=120.0, help="Request timeout in seconds.")
     parser.add_argument("--max-retries", type=int, default=40, help="Max API retries per sample.")
     parser.add_argument("--seed", type=int, nargs="+", default=None, help="Run only these seed(s).")
     parser.add_argument("--verbose", "-v", action="store_true")
@@ -283,6 +285,7 @@ def main() -> None:
                 api_key=args.api_key,
                 max_tokens=args.max_tokens,
                 temperature=args.temperature,
+                timeout=args.timeout,
                 max_retries=args.max_retries,
             ): example
             for example in examples

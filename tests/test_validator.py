@@ -1,3 +1,5 @@
+import pytest
+
 from ifstruct.validator import (
     check_for_commentary,
     check_for_commentary_yaml,
@@ -6,6 +8,11 @@ from ifstruct.validator import (
     extract_yaml_from_response,
     remove_thinking_tags,
     validate_response,
+)
+
+# Captured from a real scoring run; cut off by the model's generation cap.
+RUNAWAY_NUMBER_RESPONSE = (
+    '{\n  "product_name": "NVIDIA GeForce RTX 4070 Ti Super",\n  "price_usd": ' + "24" + "9" * 8120
 )
 
 
@@ -214,3 +221,39 @@ def test_remove_thinking_tags_handles_harmony_final_channel():
     text = "analysis notes<|start|>assistant<|channel|>final<|message|>[{\"id\":\"1\"}]<|end|>"
 
     assert remove_thinking_tags(text) == '[{"id":"1"}]'
+
+
+@pytest.mark.parametrize(
+    "response",
+    [RUNAWAY_NUMBER_RESPONSE, '```json\n{"price_usd": %s}\n```' % ("9" * 8122)],
+    ids=["raw", "code_block"],
+)
+def test_json_extraction_rejects_oversized_number_literal(response):
+    data, error = extract_json_from_response(response)
+
+    assert data is None
+    # The message must stay free of the per-response digit count.
+    assert error == "JSON parse error: number literal exceeds the 4300-digit int limit"
+
+
+def test_validate_response_fails_runaway_number_literal():
+    schema = {
+        "type": "object",
+        "properties": {"product_name": {"type": "string"}, "price_usd": {"type": "number"}},
+        "required": ["product_name", "price_usd"],
+    }
+
+    result = validate_response(
+        response=RUNAWAY_NUMBER_RESPONSE,
+        json_schema=schema,
+        top_level_count=None,
+        require_no_commentary=False,
+        output_format="json",
+        top_level_key=None,
+        require_wrapper_key=False,
+        require_code_block=False,
+    )
+
+    assert result.passed is False
+    assert result.score == 0.0
+    assert any("number literal exceeds" in error for error in result.errors)

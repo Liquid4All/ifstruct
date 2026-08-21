@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -104,6 +105,13 @@ def _load_complete_json(content: str) -> tuple[Any | None, str | None]:
         parsed, end = decoder.raw_decode(content)
     except json.JSONDecodeError as exc:
         return None, f"JSON parse error: {exc}"
+    except ValueError:
+        # A numeric literal with more digits than sys.get_int_max_str_digits()
+        # makes the scanner's int() raise a bare ValueError, not a
+        # JSONDecodeError. The message omits the offending digit count, which
+        # varies per response, so every occurrence buckets under one key.
+        limit = sys.get_int_max_str_digits()
+        return None, f"JSON parse error: number literal exceeds the {limit}-digit int limit"
     trailing = content[end:].strip()
     if trailing:
         preview = trailing[:100] + "..." if len(trailing) > 100 else trailing

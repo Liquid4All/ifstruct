@@ -105,6 +105,8 @@ def _load_complete_json(content: str) -> tuple[Any | None, str | None]:
         parsed, end = decoder.raw_decode(content)
     except json.JSONDecodeError as exc:
         return None, f"JSON parse error: {exc}"
+    except RecursionError:
+        return None, "JSON parse error: structure nested too deeply to decode"
     except ValueError:
         # A numeric literal with more digits than sys.get_int_max_str_digits()
         # makes the scanner's int() raise a bare ValueError, not a

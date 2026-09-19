@@ -257,3 +257,27 @@ def test_validate_response_fails_runaway_number_literal():
     assert result.passed is False
     assert result.score == 0.0
     assert any("number literal exceeds" in error for error in result.errors)
+
+
+@pytest.mark.parametrize("response", ["[" * 10000, "```json\n" + "[" * 10000 + "\n```"])
+def test_json_extraction_rejects_deeply_nested_structure(response):
+    data, error = extract_json_from_response(response)
+
+    assert data is None
+    assert error == "JSON parse error: structure nested too deeply to decode"
+
+
+def test_validate_response_fails_deeply_nested_structure():
+    result = validate_response(
+        response="[" * 10000,
+        json_schema={"type": "array", "items": {"type": "object"}},
+        top_level_count=1,
+        require_no_commentary=True,
+        output_format="json",
+        top_level_key="items",
+        require_wrapper_key=False,
+        require_code_block=False,
+    )
+
+    assert result.passed is False
+    assert result.errors == ["JSON parse error: structure nested too deeply to decode"]

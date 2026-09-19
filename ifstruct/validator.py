@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 import sys
 from dataclasses import dataclass, field
@@ -96,15 +97,25 @@ def extract_json_from_response(response: str) -> tuple[Any | None, str | None]:
     return _load_complete_json(response)
 
 
+class _NonStandardConstant(ValueError):
+    pass
+
+
+def _reject_constant(name: str) -> float:
+    raise _NonStandardConstant(name)
+
+
 def _load_complete_json(content: str) -> tuple[Any | None, str | None]:
     content = content.strip()
     if not content:
         return None, "No valid JSON found in response"
-    decoder = json.JSONDecoder()
+    decoder = json.JSONDecoder(parse_constant=_reject_constant)
     try:
         parsed, end = decoder.raw_decode(content)
     except json.JSONDecodeError as exc:
         return None, f"JSON parse error: {exc}"
+    except _NonStandardConstant as exc:
+        return None, f"JSON parse error: non-standard constant {exc}"
     except ValueError:
         # A numeric literal with more digits than sys.get_int_max_str_digits()
         # makes the scanner's int() raise a bare ValueError, not a
@@ -383,6 +394,8 @@ def validate_against_json_schema(data: Any, schema: dict[str, Any], path: str = 
     if schema_type == "number":
         if not isinstance(data, (int, float)) or isinstance(data, bool):
             checks.append(FieldCheck(path or "root", False, f"expected number, got {type(data).__name__}"))
+        elif isinstance(data, float) and not math.isfinite(data):
+            checks.append(FieldCheck(path or "root", False, f"expected finite number, got {data}"))
         else:
             error = None
             minimum = schema.get("minimum")

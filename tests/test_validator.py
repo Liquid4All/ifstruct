@@ -257,3 +257,69 @@ def test_validate_response_fails_runaway_number_literal():
     assert result.passed is False
     assert result.score == 0.0
     assert any("number literal exceeds" in error for error in result.errors)
+
+
+NUMBER_SCHEMA = {
+    "type": "array",
+    "items": {"type": "object", "properties": {"amount": {"type": "number"}}, "required": ["amount"]},
+}
+BOUNDED_NUMBER_SCHEMA = {
+    "type": "array",
+    "items": {
+        "type": "object",
+        "properties": {"amount": {"type": "number", "minimum": 20, "maximum": 10000}},
+        "required": ["amount"],
+    },
+}
+
+
+def _validate_amount(response: str, schema: dict, output_format: str = "json"):
+    return validate_response(
+        response=response,
+        json_schema=schema,
+        top_level_count=1,
+        require_no_commentary=True,
+        output_format=output_format,
+        top_level_key="items",
+        require_wrapper_key=False,
+        require_code_block=False,
+    )
+
+
+@pytest.mark.parametrize("literal", ["NaN", "Infinity", "-Infinity"])
+@pytest.mark.parametrize("template", ["[%s]", "```json\n[%s]\n```"])
+def test_json_extraction_rejects_non_standard_constants(literal, template):
+    data, error = extract_json_from_response(template % literal)
+
+    assert data is None
+    assert error == f"JSON parse error: non-standard constant {literal}"
+
+
+def test_nan_no_longer_satisfies_numeric_bounds():
+    # Every comparison with NaN is false, so it passed minimum=20 / maximum=10000.
+    result = _validate_amount('[{"amount": NaN}]', BOUNDED_NUMBER_SCHEMA)
+
+    assert result.passed is False
+    assert result.errors == ["JSON parse error: non-standard constant NaN"]
+
+
+@pytest.mark.parametrize("literal", [".nan", ".inf", "-.inf", ".NaN", ".INF"])
+def test_yaml_non_finite_number_fails_schema(literal):
+    result = _validate_amount(f"- amount: {literal}", NUMBER_SCHEMA, output_format="yaml")
+
+    assert result.passed is False
+    assert any("expected finite number" in err for err in result.errors)
+
+
+def test_json_float_overflowing_to_inf_fails_schema():
+    result = _validate_amount('[{"amount": 1e999}]', NUMBER_SCHEMA)
+
+    assert result.passed is False
+    assert any("expected finite number, got inf" in err for err in result.errors)
+
+
+def test_oversized_int_in_number_field_is_compared_not_crashed():
+    result = _validate_amount('[{"amount": %s}]' % ("9" * 400), BOUNDED_NUMBER_SCHEMA)
+
+    assert result.passed is False
+    assert any("greater than maximum" in err for err in result.errors)

@@ -130,6 +130,10 @@ def build_summary(results: list[EvalResult]) -> dict[str, Any]:
                 key = "no valid YAML"
             elif "number literal exceeds" in err:
                 key = "number literal too large"
+            elif "non-standard constant" in err:
+                key = "non-standard JSON constant"
+            elif "expected finite number" in err:
+                key = "non-finite number"
             elif "must use a code block" in err:
                 key = "missing code block"
             elif "Expected wrapped object" in err:

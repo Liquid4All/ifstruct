@@ -15,6 +15,10 @@ RUNAWAY_NUMBER_RESPONSE = (
     '{\n  "product_name": "NVIDIA GeForce RTX 4070 Ti Super",\n  "price_usd": ' + "24" + "9" * 8120
 )
 
+# A real response repeated this key 16,169 levels deep, unclosed. 40,000 levels exceed the
+# parser's limit on every supported Python.
+RUNAWAY_NESTING_RESPONSE = '{"notes": "Token refresh fails.", "issue_reports": [' + '{"issue_reports": [' * 20000
+
 
 def test_unclosed_json_codeblock_is_not_extracted_as_raw_json():
     response = '```json\n[{"id": "1"}]'
@@ -257,3 +261,39 @@ def test_validate_response_fails_runaway_number_literal():
     assert result.passed is False
     assert result.score == 0.0
     assert any("number literal exceeds" in error for error in result.errors)
+
+
+@pytest.mark.parametrize(
+    "response",
+    [RUNAWAY_NESTING_RESPONSE, "```json\n" + "[" * 40000 + "]" * 40000 + "\n```"],
+    ids=["raw", "code_block"],
+)
+def test_json_extraction_rejects_nesting_past_the_recursion_limit(response):
+    data, error = extract_json_from_response(response)
+
+    assert data is None
+    # The message must stay free of the per-response depth.
+    assert error == "JSON parse error: nesting exceeds the parser's recursion limit"
+
+
+def test_validate_response_fails_runaway_nesting():
+    schema = {
+        "type": "object",
+        "properties": {"notes": {"type": "string"}, "issue_reports": {"type": "array"}},
+        "required": ["notes", "issue_reports"],
+    }
+
+    result = validate_response(
+        response=RUNAWAY_NESTING_RESPONSE,
+        json_schema=schema,
+        top_level_count=None,
+        require_no_commentary=False,
+        output_format="json",
+        top_level_key=None,
+        require_wrapper_key=False,
+        require_code_block=False,
+    )
+
+    assert result.passed is False
+    assert result.score == 0.0
+    assert any("nesting exceeds" in error for error in result.errors)

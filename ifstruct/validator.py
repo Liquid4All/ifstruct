@@ -112,6 +112,10 @@ def _load_complete_json(content: str) -> tuple[Any | None, str | None]:
         # varies per response, so every occurrence buckets under one key.
         limit = sys.get_int_max_str_digits()
         return None, f"JSON parse error: number literal exceeds the {limit}-digit int limit"
+    except RecursionError:
+        # Deep nesting raises RecursionError, not JSONDecodeError. The message
+        # omits the depth so every occurrence buckets under one key.
+        return None, "JSON parse error: nesting exceeds the parser's recursion limit"
     trailing = content[end:].strip()
     if trailing:
         preview = trailing[:100] + "..." if len(trailing) > 100 else trailing

@@ -15,6 +15,7 @@ class Refusal(Exception):
 class CompletionResult:
     text: str
     latency_ms: float
+    finish_reason: str = ""
 
 
 def _chat_completions_url(base_url: str) -> str:
@@ -90,9 +91,11 @@ def chat_completion(
             data = response.json()
             if "error" in data:
                 raise ValueError(f"API error: {data['error']}")
+            choice = data["choices"][0] if isinstance(data.get("choices"), list) and data["choices"] else {}
             return CompletionResult(
                 text=_extract_message_text(data),
                 latency_ms=latency_ms,
+                finish_reason=str(choice.get("finish_reason") or ""),
             )
         except Refusal:
             raise

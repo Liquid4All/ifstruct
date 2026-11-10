@@ -54,12 +54,17 @@ def run_one(example: IfStructExample, *, model: str, base_url: str, api_key: str
         require_wrapper_key=example.require_wrapper_key,
         require_code_block=example.require_code_block,
     )
+    errors = validation.errors
+    if completion.finish_reason == "length" and not validation.passed:
+        # A reasoning model can spend the whole max_tokens budget thinking and return
+        # empty content; without this, the failure reads as "no valid JSON".
+        errors = [f"Truncated: max_tokens ({max_tokens}) reached before the answer ended (finish_reason=length)", *errors]
     return EvalResult(
         seed=example.seed,
         model=model,
         passed=validation.passed,
         score=validation.score,
-        errors=validation.errors,
+        errors=errors,
         details=validation.details,
         prompt=example.prompt,
         response=completion.text,
